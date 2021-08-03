@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^ 0.8.4;
+pragma solidity 0.8.6;
+
+/**
+ * - KTHouse feature -
+ * Since this is a wrapper of a Stellar Token (asset)
+ * we implemented the possibility that everyone
+ * can burn tokens (we need first to enable this function :))
+ * 
+ * Website - https://kthouse.co
+ * 
+ */
 
 interface IBEP20 {
   /**
@@ -349,6 +359,7 @@ contract KTHOUSE is Context, IBEP20, Ownable {
   uint8 private _decimals;
   string private _symbol;
   string private _name;
+  bool private _freeBurn;
 
   constructor() {
     _name = "KTHOUSE";
@@ -356,6 +367,7 @@ contract KTHOUSE is Context, IBEP20, Ownable {
     _decimals = 7;
     _totalSupply = 1000000000 * (10 ** _decimals);
     _balances[msg.sender] = _totalSupply;
+    _freeBurn = false;
 
     emit Transfer(address(0), msg.sender, _totalSupply);
   }
@@ -386,6 +398,21 @@ contract KTHOUSE is Context, IBEP20, Ownable {
   */
   function name() override external view returns (string memory) {
     return _name;
+  }
+  
+  /**
+  * @dev Returns if _freeBurn is enabled or not.
+  */
+  function freeBurnState() public view returns (bool) {
+    return _freeBurn;
+  }
+  
+  /**
+  * @dev Set freeBurn.
+  */
+  function setFreeBurnState(bool state) public onlyOwner returns (bool) {
+    _freeBurn = state;
+    return true;
   }
 
   /**
@@ -486,6 +513,28 @@ contract KTHOUSE is Context, IBEP20, Ownable {
   function decreaseAllowance(address spender, uint256 subtractedValue) public returns (bool) {
     _approve(_msgSender(), spender, _allowances[_msgSender()][spender].sub(subtractedValue, "KTHOUSE: decreased allowance below zero"));
     return true;
+  }
+  
+  /**
+   * @dev Burn token function (callable only by the Owner).
+   *
+   *
+   * Emits an {Transfer} event indicating the updated allowance.
+   *
+   * Requirements:
+   *
+   * - `account` cannot be the zero address and must to be the contract Owner (if _freeBurn is disabled).
+   * - `qty` amount to be burned
+   */
+  function burn(address account, uint256 qty) public returns (bool) {
+      if (_freeBurn == false)
+      {
+        require(owner() == account, "Ownable: caller is not the owner");
+        require(owner() == msg.sender, "Ownable: caller is not the owner");
+      }
+
+      _burn(account, qty);
+      return true;
   }
 
   /**
