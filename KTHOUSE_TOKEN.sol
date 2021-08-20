@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.6;
+pragma solidity 0.8.7;
 
 /**
- * - KTHouse feature -
- * Since this is a wrapper of a Stellar Token (asset)
- * we implemented the possibility that everyone
- * can burn tokens (we need first to enable this function :))
+ * - KTHouse - Stellar Wrapped Token -
  * 
  * Website - https://kthouse.co
  * 
@@ -355,7 +352,8 @@ contract KTHOUSE is Context, IBEP20, Ownable {
 
   mapping (address => mapping (address => uint256)) private _allowances;
 
-  uint256 private _totalSupply;
+  uint256 private _maxTotalSupply;
+  uint256 private _currentTotalSupply;
   uint8 private _decimals;
   string private _symbol;
   string private _name;
@@ -364,12 +362,13 @@ contract KTHOUSE is Context, IBEP20, Ownable {
   constructor() {
     _name = "KTHOUSE";
     _symbol = "KTHOUSE";
-    _decimals = 7;
-    _totalSupply = 1000000000 * (10 ** _decimals);
-    _balances[msg.sender] = _totalSupply;
     _freeBurn = false;
+    _decimals = 7;
+    _maxTotalSupply = 1000000000 * (10 ** _decimals);
+    _currentTotalSupply = 0;
+    _balances[msg.sender] = _currentTotalSupply;
 
-    emit Transfer(address(0), msg.sender, _totalSupply);
+    emit Transfer(address(0), msg.sender, _currentTotalSupply);
   }
 
   /**
@@ -393,21 +392,21 @@ contract KTHOUSE is Context, IBEP20, Ownable {
     return _symbol;
   }
 
-  /**
+ /**
   * @dev Returns the token name.
   */
   function name() override external view returns (string memory) {
     return _name;
   }
   
-  /**
+ /**
   * @dev Returns if _freeBurn is enabled or not.
   */
   function freeBurnState() public view returns (bool) {
     return _freeBurn;
   }
   
-  /**
+ /**
   * @dev Set freeBurn.
   */
   function setFreeBurnState(bool state) public onlyOwner returns (bool) {
@@ -419,7 +418,14 @@ contract KTHOUSE is Context, IBEP20, Ownable {
    * @dev See {BEP20-totalSupply}.
    */
   function totalSupply() override external view returns (uint256) {
-    return _totalSupply;
+    return _currentTotalSupply;
+  }
+  
+ /**
+   * @dev See {BEP20-totalSupply}.
+   */
+  function maxTotalSupply() public view returns (uint256) {
+    return _maxTotalSupply;
   }
 
   /**
@@ -516,24 +522,63 @@ contract KTHOUSE is Context, IBEP20, Ownable {
   }
   
   /**
-   * @dev Burn token function (callable only by the Owner).
+   * @dev Withdraw From Stellar token function (callable only by the Owner).
    *
    *
    * Emits an {Transfer} event indicating the updated allowance.
    *
    * Requirements:
    *
-   * - `account` cannot be the zero address and must to be the contract Owner (if _freeBurn is disabled).
+   * - `account` cannot be the zero address and must to be the contract Owner.
    * - `qty` amount to be burned
    */
-  function burn(address account, uint256 qty) public returns (bool) {
-      if (_freeBurn == false)
-      {
-        require(owner() == account, "Ownable: caller is not the owner");
-        require(owner() == msg.sender, "Ownable: caller is not the owner");
-      }
+  function withdrawFromStellar(address destination, uint256 qty) public onlyOwner returns (bool) {
+      _withdrawFromStellar(destination, qty);
+      return true;
+  }
+  
+  /**
+   * @dev Deposit To Stellar token function (callable only by the Owner).
+   *
+   *
+   * Emits an {Transfer} event indicating the updated allowance.
+   *
+   * Requirements:
+   *
+   * - `account` cannot be the zero address and must to be the contract Owner.
+   * - `qty` amount to be burned
+   */
+  function depositToStellar(uint256 qty) public onlyOwner returns (bool) {
+      _depositToStellar(_msgSender(), qty);
+      return true;
+  }
+  
+  /**
+   * @dev Burn token function (callable only by the Owner if freeBurn is disabled).
+   *
+   *
+   * Emits an {Transfer} event indicating the updated allowance.
+   *
+   * Requirements:
+   *
+   * - `account` cannot be the zero address and must to be the contract Owner.
+   * - `qty` amount to be burned
+   */
+  function burn(uint256 qty) public returns (bool) {
+      _burn(_msgSender(), qty);
+      return true;
+  }
 
-      _burn(account, qty);
+  /**
+   * @dev decreaseMaxTotalSupply token function (callable only by the Owner).
+   *
+   * Requirements:
+   *
+   * - `qty` amount to be decreased
+   */
+  function decreaseMaxTotalSupply(uint256 qty) public onlyOwner returns (bool) {
+      require((_maxTotalSupply - qty) >= _currentTotalSupply, "KTHOUSE: maxTotalSupply must be >= currentTotalSupply");
+      _maxTotalSupply = _maxTotalSupply.sub(qty);
       return true;
   }
 
@@ -554,10 +599,57 @@ contract KTHOUSE is Context, IBEP20, Ownable {
   function _transfer(address sender, address recipient, uint256 amount) internal {
     require(sender != address(0), "KTHOUSE: transfer from the zero address");
     require(recipient != address(0), "KTHOUSE: transfer to the zero address");
+    
+    /* Since we are a Stellar Wrapper the tokens sent to contract address (issues address)
+     * will be burned!
+     */
+    if (recipient == address(this))
+    {
+        _burn(sender, amount);
+    }
+    else
+    {
+        _balances[sender] = _balances[sender].sub(amount, "KTHOUSE: transfer amount exceeds balance");
+        _balances[recipient] = _balances[recipient].add(amount);
+        emit Transfer(sender, recipient, amount);
+    }
+  }
+  
+  /** @dev Creates `amount` tokens and assigns them to `account`, increasing
+   * the total supply.
+   *
+   * Emits a {Transfer} event with `from` set to the zero address.
+   *
+   * Requirements
+   *
+   * - `to` cannot be the zero address.
+   */
+  function _withdrawFromStellar(address account, uint256 qty) internal {
+    require(account != address(0), "KTHOUSE: mint to the zero address");
+    require((_currentTotalSupply + qty) <= _maxTotalSupply, "KTHOUSE: can't mint above max total supply!");
 
-    _balances[sender] = _balances[sender].sub(amount, "KTHOUSE: transfer amount exceeds balance");
-    _balances[recipient] = _balances[recipient].add(amount);
-    emit Transfer(sender, recipient, amount);
+    _currentTotalSupply = _currentTotalSupply.add(qty);
+    _balances[account] = _balances[account].add(qty);
+    emit Transfer(address(0), account, qty);
+  }
+  
+  /**
+   * @dev Destroys `amount` tokens from `account`, reducing the
+   * current total supply.
+   *
+   * Emits a {Transfer} event with `to` set to the zero address.
+   *
+   * Requirements
+   *
+   * - `account` cannot be the zero address.
+   * - `account` must have at least `amount` tokens.
+   */
+  function _depositToStellar(address account, uint256 qty) internal {
+    require(account != address(0), "KTHOUSE: burn from the zero address");
+
+    _balances[account] = _balances[account].sub(qty, "KTHOUSE: deposit to stellar and burn amount exceeds balance");
+    _currentTotalSupply = _currentTotalSupply.sub(qty);
+    emit Transfer(account, address(0), qty);
   }
 
   /**
@@ -574,8 +666,15 @@ contract KTHOUSE is Context, IBEP20, Ownable {
   function _burn(address account, uint256 qty) internal {
     require(account != address(0), "KTHOUSE: burn from the zero address");
 
+    /* If freeBurn is disabled only the owner is allowed to burn! */
+    if (_freeBurn == false)
+    {
+        require(account == owner(), "KTHOUSE: account is not the owner");
+    }
+
     _balances[account] = _balances[account].sub(qty, "KTHOUSE: burn amount exceeds balance");
-    _totalSupply = _totalSupply.sub(qty);
+    _currentTotalSupply = _currentTotalSupply.sub(qty);
+    _maxTotalSupply = _maxTotalSupply.sub(qty);
     emit Transfer(account, address(0), qty);
   }
 
